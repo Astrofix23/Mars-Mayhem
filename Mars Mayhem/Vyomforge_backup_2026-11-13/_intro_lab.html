@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>intro lab (scratch)</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        background: #000;
+        overflow: hidden;
+      }
+    </style>
+  </head>
+  <body>
+    <script src="js/vendor/three.min.js"></script>
+    <script type="module">
+      import { playIntro } from './js/intro.js';
+
+      // The in-app browser is often hidden, which throttles requestAnimationFrame to a
+      // crawl, so the lab replaces rAF with a manual pump and drives intro.js off a
+      // virtual clock. Every __pump step is one deterministic 50 ms frame.
+      let vnow = 0;
+      let queue = [];
+      window.performance.now = () => vnow;
+      window.requestAnimationFrame = (cb) => queue.push(cb);
+      window.cancelAnimationFrame = () => {};
+
+      window.__pump = (steps, dtMs) => {
+        for (let i = 0; i < steps; i++) {
+          vnow += dtMs;
+          const cbs = queue;
+          queue = [];
+          for (const cb of cbs) cb(vnow);
+        }
+        return window.__realTc();
+      };
+      window.__realTc = () => {
+        const el = document.querySelector('#intro-tc');
+        if (!el) return null;
+        const m = /T\+(\d+\.\d)/.exec(el.textContent);
+        return m ? Number(m[1]) : null;
+      };
+      window.__seek = (target) => {
+        let guard = 0;
+        while ((window.__realTc() ?? 0) < target && guard++ < 2000) window.__pump(1, 50);
+        return window.__realTc();
+      };
+      window.__shot = async (name) => {
+        const d = window.__INTRO_DEBUG;
+        d.renderer.render(d.scene, d.camera);
+        const url = d.renderer.domElement.toDataURL('image/png');
+        const bin = atob(url.split(',')[1]);
+        const arr = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+        const r = await fetch('http://127.0.0.1:8135/?name=' + name, { method: 'POST', body: arr });
+        return { name, bytes: arr.length, ack: await r.text(), tc: window.__realTc() };
+      };
+      window.__pad = () => window.__INTRO_DEBUG.scene.children.find((o) => o.type === 'Group' && o.children.length > 20);
+      window.__probe = (pred) => {
+        const out = [];
+        window.__INTRO_DEBUG.scene.traverse((o) => {
+          if (!o.visible || !o.geometry) return;
+          const p = o.geometry.attributes.position;
+          if (!p) return;
+          const m = o.material;
+          const ua = m && m.uniforms && m.uniforms.uAlpha ? +m.uniforms.uAlpha.value.toFixed(2) : null;
+          if (!pred || pred({ type: o.type, n: p.count, ua, blend: m && m.blending }))
+            out.push({ type: o.type, n: p.count, ua, blend: m && m.blending });
+        });
+        return out;
+      };
+
+      window.addEventListener('unhandledrejection', (ev) => {
+        document.title = 'ERROR ' + ev.reason;
+      });
+
+      playIntro({ onDone: () => {} });
+      window.__pump(1, 0);
+    </script>
+  </body>
+</html>
